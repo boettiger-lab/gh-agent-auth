@@ -113,6 +113,14 @@ if [[ ${#REPOS[@]} -gt 0 ]]; then
   BODY=$(printf '%s' "$BODY" | jq -c --argjson repos "$REPOS_JSON" '.repositories = $repos')
 fi
 
+if [[ -n "$PERMS" ]]; then
+  # Convert "key=val,key=val" into a JSON object.
+  PERMS_JSON=$(printf '%s\n' "$PERMS" | tr ',' '\n' \
+    | jq -R 'select(length > 0) | split("=") | {(.[0]): .[1]}' \
+    | jq -cs 'add // {}')
+  BODY=$(printf '%s' "$BODY" | jq -c --argjson perms "$PERMS_JSON" '.permissions = $perms')
+fi
+
 CURL_ARGS=(-fsS -X POST
   -H "Authorization: Bearer $JWT"
   -H "Accept: application/vnd.github+json"

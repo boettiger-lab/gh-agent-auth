@@ -87,4 +87,42 @@ echo "test: --repo with bare name (no slash) is rejected"
   fi
 )
 
+echo "test: --permissions flag adds permissions{} to POST body"
+(
+  make_sandbox dir
+  mock_openssl "$dir"
+  mock_curl "$dir"
+  mock_env_for_get_token
+
+  "$REPO_DIR/bin/get-github-token" --permissions contents=read,issues=write \
+    >/dev/null 2>&1 || fail "exited non-zero"
+
+  body=$(last_curl_body "$dir")
+  perms=$(echo "$body" | jq -c '.permissions // {}')
+  if [[ "$perms" == '{"contents":"read","issues":"write"}' ]]; then
+    ok "POST body has correct permissions object: $perms"
+  else
+    fail "expected permissions={\"contents\":\"read\",\"issues\":\"write\"}, got: $perms"
+  fi
+)
+
+echo "test: --repo and --permissions combine in body"
+(
+  make_sandbox dir
+  mock_openssl "$dir"
+  mock_curl "$dir"
+  mock_env_for_get_token
+
+  "$REPO_DIR/bin/get-github-token" --repo test-org/foo --permissions contents=read \
+    >/dev/null 2>&1 || fail "exited non-zero"
+
+  body=$(last_curl_body "$dir")
+  has_both=$(echo "$body" | jq -c '{r: .repositories, p: .permissions}')
+  if [[ "$has_both" == '{"r":["foo"],"p":{"contents":"read"}}' ]]; then
+    ok "body has both repositories and permissions: $has_both"
+  else
+    fail "expected both keys, got: $has_both"
+  fi
+)
+
 report
