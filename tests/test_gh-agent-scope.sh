@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -uo pipefail
+. "$(dirname "$0")/helpers.bash"
+
+# Mock that captures argv to a log so we can assert what gh-agent-scope passed.
+# Args: $1 = sandbox dir, $2 = optional canned token (default ghs_FAKE)
+mock_get_github_token() {
+  local dir="$1"
+  local token="${2:-ghs_FAKE}"
+  cat > "$dir/get-github-token" <<EOF
+#!/usr/bin/env bash
+echo "ARGS: \$*" >> "$dir/gtt.log"
+echo "$token"
+echo "expires_at: 2026-04-28T00:00:00Z" >&2
+EOF
+  chmod +x "$dir/get-github-token"
+}
+
+echo "test: --help prints usage and exits 0"
+(
+  out=$("$REPO_DIR/bin/gh-agent-scope" --help 2>&1) \
+    && [[ "$out" == *"Usage: gh-agent-scope"* ]] \
+    && ok "help output looks right" \
+    || fail "help failed or wrong; got: $out"
+)
+
+echo "test: explicit --repo passes through to get-github-token"
+(
+  make_sandbox dir
+  mock_get_github_token "$dir"
+
+  "$REPO_DIR/bin/gh-agent-scope" --repo my-org/foo >/dev/null 2>&1 \
+    || fail "non-zero exit"
+
+  args=$(cat "$dir/gtt.log")
+  [[ "$args" == "ARGS: --repo my-org/foo" ]] \
+    && ok "passed --repo through correctly" \
+    || fail "expected ARGS: --repo my-org/foo, got: $args"
+)
+
+echo "test: auto-detects repo from origin remote"
+(
+  make_sandbox dir
+  mock_get_github_token "$dir"
+
+  # Make a fake repo with a github.com origin
+  repo_dir="$dir/clone"
+  mkdir -p "$repo_dir"
+  ( cd "$repo_dir" && git init -q && git remote add origin https://github.com/auto-org/auto-repo.git )
+
+  ( cd "$repo_dir" && "$REPO_DIR/bin/gh-agent-scope" >/dev/null 2>&1 ) \
+    || fail "non-zero exit"
+
+  args=$(cat "$dir/gtt.log")
+  [[ "$args" == "ARGS: --repo auto-org/auto-repo" ]] \
+    && ok "auto-detected repo from origin" \
+    || fail "expected --repo auto-org/auto-repo, got: $args"
+)
+
+echo "test: handles SSH-style origin URL"
+(
+  make_sandbox dir
+  mock_get_github_token "$dir"
+
+  repo_dir="$dir/clone"
+  mkdir -p "$repo_dir"
+  ( cd "$repo_dir" && git init -q && git remote add origin git@github.com:ssh-org/ssh-repo.git )
+
+  ( cd "$repo_dir" && "$REPO_DIR/bin/gh-agent-scope" >/dev/null 2>&1 ) \
+    || fail "non-zero exit"
+
+  args=$(cat "$dir/gtt.log")
+  [[ "$args" == "ARGS: --repo ssh-org/ssh-repo" ]] \
+    && ok "auto-detected from SSH origin" \
+    || fail "expected --repo ssh-org/ssh-repo, got: $args"
+)
+
+report
