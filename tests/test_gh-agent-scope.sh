@@ -75,4 +75,49 @@ echo "test: handles SSH-style origin URL"
     || fail "expected --repo ssh-org/ssh-repo, got: $args"
 )
 
+echo "test: print-only mode prints token to stdout, expires_at to stderr"
+(
+  make_sandbox dir
+  mock_get_github_token "$dir" "ghs_PRINTONLY_TOKEN"
+
+  out=$("$REPO_DIR/bin/gh-agent-scope" --repo test-org/foo 2>/dev/null)
+  err=$("$REPO_DIR/bin/gh-agent-scope" --repo test-org/foo 2>&1 >/dev/null)
+
+  [[ "$out" == "ghs_PRINTONLY_TOKEN" ]] \
+    && ok "stdout is just the token" \
+    || fail "stdout=[$out]"
+
+  [[ "$err" == *"expires_at: 2026-04-28T00:00:00Z"* ]] \
+    && ok "stderr has expires_at" \
+    || fail "stderr=[$err]"
+)
+
+echo "test: --permissions flag is passed through"
+(
+  make_sandbox dir
+  mock_get_github_token "$dir"
+
+  "$REPO_DIR/bin/gh-agent-scope" --repo o/r --permissions contents=read >/dev/null 2>&1 \
+    || fail "non-zero exit"
+
+  args=$(cat "$dir/gtt.log")
+  [[ "$args" == "ARGS: --repo o/r --permissions contents=read" ]] \
+    && ok "permissions flag passed through" \
+    || fail "got: $args"
+)
+
+echo "test: multiple --repo flags are passed through individually"
+(
+  make_sandbox dir
+  mock_get_github_token "$dir"
+
+  "$REPO_DIR/bin/gh-agent-scope" --repo o/r1 --repo o/r2 >/dev/null 2>&1 \
+    || fail "non-zero exit"
+
+  args=$(cat "$dir/gtt.log")
+  [[ "$args" == "ARGS: --repo o/r1 --repo o/r2" ]] \
+    && ok "both --repo flags passed" \
+    || fail "got: $args"
+)
+
 report
