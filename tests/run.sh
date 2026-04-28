@@ -1,22 +1,34 @@
 #!/usr/bin/env bash
-# Run all test_*.sh files in this directory, summarize results.
+# Run every test_*.sh file in this directory; print per-file PASS/FAIL plus
+# an overall summary. Exits non-zero if any file failed.
 set -uo pipefail
 
 cd "$(dirname "$0")"
-
-ANY_FAIL=0
 shopt -s nullglob
+
+PASSED=()
+FAILED=()
+
 for f in test_*.sh; do
   echo "=== $f ==="
   if bash "$f"; then
-    :
+    PASSED+=("$f")
   else
-    ANY_FAIL=1
+    FAILED+=("$f")
   fi
 done
 
 echo
-if (( ANY_FAIL == 0 )); then
+echo "Summary:"
+if (( ${#PASSED[@]} > 0 )); then
+  for f in "${PASSED[@]}"; do echo "  PASS: $f"; done
+fi
+if (( ${#FAILED[@]} > 0 )); then
+  for f in "${FAILED[@]}"; do echo "  FAIL: $f"; done
+fi
+echo
+
+if (( ${#FAILED[@]} == 0 )); then
   echo "ALL TESTS PASSED"
   exit 0
 else

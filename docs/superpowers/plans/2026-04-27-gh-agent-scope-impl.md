@@ -10,6 +10,19 @@
 
 **Spec:** [`docs/superpowers/specs/2026-04-27-gh-agent-scope-design.md`](../specs/2026-04-27-gh-agent-scope-design.md)
 
+> **Note for implementers reading Task 1:** The `tests/helpers.bash` file
+> shipped with the test scaffolding evolved beyond the literal text in
+> Task 1's Step 2 to fix two real bugs caught during code review:
+> (1) `make_sandbox` now sets a caller-provided variable via `printf -v`
+> instead of writing to stdout (the `$(...)` capture pattern fired the
+> EXIT trap immediately, deleting the sandbox before the caller saw it);
+> (2) cleanup is centralized through a single `cleanup_path PATH...`
+> helper, with paths persisted to a file so subshell-registered cleanups
+> survive subshell exit. Test bodies use `cleanup_path` instead of inline
+> `trap "rm -f ..." EXIT`. **Treat `tests/helpers.bash` as the canonical
+> source of helper behavior** — Task 1's literal text is preserved for
+> historical traceability but is superseded by the file.
+
 ---
 
 ## File structure
@@ -241,7 +254,7 @@ echo "test: executed mode emits expires_at to stderr"
 
   out_file=$(mktemp)
   err_file=$(mktemp)
-  trap "rm -f '$out_file' '$err_file'" EXIT
+  cleanup_path "$out_file" "$err_file"
 
   if "$REPO_DIR/bin/get-github-token" >"$out_file" 2>"$err_file"; then
     grep -q '^expires_at: 2026-04-28T00:00:00Z$' "$err_file" \
@@ -355,7 +368,7 @@ echo "test: --repo with cross-org value errors out"
   mock_env_for_get_token
 
   err_file=$(mktemp)
-  trap "rm -f '$err_file'" EXIT
+  cleanup_path "$err_file"
 
   if "$REPO_DIR/bin/get-github-token" --repo other-org/foo >/dev/null 2>"$err_file"; then
     fail "expected non-zero exit for cross-org repo"
@@ -649,7 +662,7 @@ echo "test: errors clearly when neither decrypted nor encrypted key is available
   export GH_AGENT_AUTH_CONFIG=/dev/null
 
   err_file=$(mktemp)
-  trap "rm -f '$err_file'" EXIT
+  cleanup_path "$err_file"
 
   if "$REPO_DIR/bin/get-github-token" >/dev/null 2>"$err_file"; then
     fail "expected non-zero exit when no key available"
@@ -1217,7 +1230,7 @@ echo "test: errors when not in a git repo and no --repo given"
   cd "$dir"  # not a git repo
 
   err_file=$(mktemp)
-  trap "rm -f '$err_file'" EXIT
+  cleanup_path "$err_file"
 
   if "$REPO_DIR/bin/gh-agent-scope" -- env >/dev/null 2>"$err_file"; then
     fail "expected non-zero exit"
@@ -1238,7 +1251,7 @@ echo "test: errors when origin is not a github.com remote"
   ( cd "$repo_dir" && git init -q && git remote add origin https://gitlab.com/foo/bar.git )
 
   err_file=$(mktemp)
-  trap "rm -f '$err_file'" EXIT
+  cleanup_path "$err_file"
 
   if ( cd "$repo_dir" && "$REPO_DIR/bin/gh-agent-scope" -- env ) >/dev/null 2>"$err_file"; then
     fail "expected non-zero exit"
@@ -1252,7 +1265,7 @@ echo "test: errors when origin is not a github.com remote"
 echo "test: errors on unknown flag"
 (
   err_file=$(mktemp)
-  trap "rm -f '$err_file'" EXIT
+  cleanup_path "$err_file"
 
   if "$REPO_DIR/bin/gh-agent-scope" --bogus >/dev/null 2>"$err_file"; then
     fail "expected non-zero exit"
