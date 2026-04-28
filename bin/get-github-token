@@ -106,7 +106,7 @@ if [[ ${#REPOS[@]} -gt 0 ]]; then
       */*)
         die "repo $r is not in $APP_ORG (App is installed there). Pass repos owned by $APP_ORG only." ;;
       *)
-        REPO_NAMES+=("$r") ;;  # bare name, assume same org
+        die "repo '$r' must be in OWNER/REPO form (got bare name)" ;;
     esac
   done
   REPOS_JSON=$(printf '%s\n' "${REPO_NAMES[@]}" | jq -R . | jq -cs .)

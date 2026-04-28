@@ -68,4 +68,23 @@ echo "test: --repo with cross-org value errors out"
   fi
 )
 
+echo "test: --repo with bare name (no slash) is rejected"
+(
+  make_sandbox dir
+  mock_openssl "$dir"
+  mock_curl "$dir"
+  mock_env_for_get_token
+
+  err_file=$(mktemp)
+  cleanup_path "$err_file"
+
+  if "$REPO_DIR/bin/get-github-token" --repo solo-name >/dev/null 2>"$err_file"; then
+    fail "expected non-zero exit for bare repo name"
+  else
+    grep -qi 'OWNER/REPO' "$err_file" \
+      && ok "error message points at the OWNER/REPO form requirement" \
+      || fail "error did not mention OWNER/REPO form: $(cat "$err_file")"
+  fi
+)
+
 report
