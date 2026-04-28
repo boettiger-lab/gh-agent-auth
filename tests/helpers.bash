@@ -166,3 +166,23 @@ last_curl_body() {
   local dir="$1"
   grep '^BODY: ' "$dir/curl.log" 2>/dev/null | tail -n1 | sed 's/^BODY: //'
 }
+
+# Install mock age + age-plugin-yubikey that emit fake outputs and log calls.
+# Args: $1 = sandbox dir
+mock_age() {
+  local dir="$1"
+  cat > "$dir/age" <<EOF
+#!/usr/bin/env bash
+echo "AGE_CALLED: \$*" >> "$dir/age.log"
+# Emit fake decrypted key content. openssl is mocked too, so contents don't matter.
+echo "FAKE_DECRYPTED_KEY"
+EOF
+  chmod +x "$dir/age"
+
+  cat > "$dir/age-plugin-yubikey" <<EOF
+#!/usr/bin/env bash
+echo "AGE_PLUGIN_CALLED: \$*" >> "$dir/age.log"
+echo "FAKE_IDENTITY"
+EOF
+  chmod +x "$dir/age-plugin-yubikey"
+}

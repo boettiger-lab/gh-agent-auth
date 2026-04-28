@@ -125,4 +125,55 @@ echo "test: --repo and --permissions combine in body"
   fi
 )
 
+echo "test: cold-start decrypts via age when KEY_DECRYPTED is missing"
+(
+  make_sandbox dir
+  mock_openssl "$dir"
+  mock_curl "$dir"
+  mock_age "$dir"
+
+  echo "ENCRYPTED_DATA" > "$dir/key.age"
+
+  export GITHUB_APP_ID=123456
+  export GITHUB_APP_ORG=test-org
+  export GH_AGENT_AUTH_KEY_DECRYPTED="$dir/does-not-exist"
+  export GH_AGENT_AUTH_KEY_ENCRYPTED="$dir/key.age"
+  export GH_AGENT_AUTH_CONFIG=/dev/null
+
+  "$REPO_DIR/bin/get-github-token" >/dev/null 2>&1 \
+    || fail "get-github-token failed in cold-start mode"
+
+  if [[ -f "$dir/age.log" ]]; then
+    grep -q '^AGE_CALLED: ' "$dir/age.log" \
+      && ok "age was invoked for decryption" \
+      || fail "age log exists but no AGE_CALLED line"
+  else
+    fail "age was not invoked"
+  fi
+)
+
+echo "test: errors clearly when neither decrypted nor encrypted key is available"
+(
+  make_sandbox dir
+  mock_openssl "$dir"
+  mock_curl "$dir"
+
+  export GITHUB_APP_ID=123456
+  export GITHUB_APP_ORG=test-org
+  export GH_AGENT_AUTH_KEY_DECRYPTED="$dir/does-not-exist"
+  unset GH_AGENT_AUTH_KEY_ENCRYPTED
+  export GH_AGENT_AUTH_CONFIG=/dev/null
+
+  err_file=$(mktemp)
+  cleanup_path "$err_file"
+
+  if "$REPO_DIR/bin/get-github-token" >/dev/null 2>"$err_file"; then
+    fail "expected non-zero exit when no key available"
+  else
+    grep -qi 'gh-agent-unlock\|GH_AGENT_AUTH_KEY_ENCRYPTED' "$err_file" \
+      && ok "error message points at the two recovery paths" \
+      || fail "error not actionable: $(cat "$err_file")"
+  fi
+)
+
 report

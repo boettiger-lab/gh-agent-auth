@@ -61,7 +61,15 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 [[ -n "$APP_ID"  ]] || die "GITHUB_APP_ID is not set (configure in $CONFIG_FILE or env)"
 [[ -n "$APP_ORG" ]] || die "GITHUB_APP_ORG is not set (configure in $CONFIG_FILE or env)"
 
-[[ -f "$KEY_PATH" ]] || die "Private key not unlocked at $KEY_PATH. Run gh-agent-unlock first."
+KEY_ENCRYPTED="${GH_AGENT_AUTH_KEY_ENCRYPTED:-}"
+
+if [[ ! -f "$KEY_PATH" && ! -f "$KEY_ENCRYPTED" ]]; then
+  die "No private key available.
+Either unlock the persistent key:
+  gh-agent-unlock
+or set GH_AGENT_AUTH_KEY_ENCRYPTED to the path of your age-encrypted .pem
+in $CONFIG_FILE or your environment."
+fi
 
 command -v jq      >/dev/null || die "jq is required"
 command -v curl    >/dev/null || die "curl is required"
@@ -77,9 +85,21 @@ EXP=$((NOW + 540))  # 9 min (GitHub max is 10)
 
 HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | base64url)
 PAYLOAD=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$IAT" "$EXP" "$APP_ID" | base64url)
-SIG=$(printf '%s' "${HEADER}.${PAYLOAD}" \
-  | openssl dgst -sha256 -sign "$KEY_PATH" \
-  | base64url)
+if [[ -f "$KEY_PATH" ]]; then
+  # Fast path: persistent key already unlocked
+  SIG=$(printf '%s' "${HEADER}.${PAYLOAD}" \
+    | openssl dgst -sha256 -sign "$KEY_PATH" \
+    | base64url)
+else
+  # Cold start: decrypt via age + age-plugin-yubikey through process
+  # substitution so the decrypted key never lands on disk.
+  command -v age              >/dev/null || die "age not on PATH (needed for cold-start decryption)"
+  command -v age-plugin-yubikey >/dev/null || die "age-plugin-yubikey not on PATH"
+
+  SIG=$(printf '%s' "${HEADER}.${PAYLOAD}" \
+    | openssl dgst -sha256 -sign <(age --decrypt -i <(age-plugin-yubikey --identity) "$KEY_ENCRYPTED") \
+    | base64url)
+fi
 JWT="${HEADER}.${PAYLOAD}.${SIG}"
 
 INSTALLATION_ID=$(curl -fsS \
