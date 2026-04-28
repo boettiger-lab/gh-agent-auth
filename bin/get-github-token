@@ -72,10 +72,12 @@ EXPIRES=$(printf '%s' "$RESPONSE" | jq -r '.expires_at // empty')
 
 [[ -n "$TOKEN" ]] || die "Failed to mint token. Response: $RESPONSE"
 
-# When sourced: export GITHUB_TOKEN. When executed: print the token.
+# Always emit expiry to stderr so callers can capture it.
+echo "expires_at: $EXPIRES" >&2
+
+# When sourced: export GITHUB_TOKEN. When executed: print the token to stdout.
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
   export GITHUB_TOKEN="$TOKEN"
-  echo "GITHUB_TOKEN set (expires $EXPIRES)" >&2
 else
   echo "$TOKEN"
 fi
