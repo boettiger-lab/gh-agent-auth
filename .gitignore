@@ -1,0 +1,8 @@
+# Anything that smells like a key — defense in depth, this repo should
+# never contain credentials in the first place.
+*.pem
+*.pem.age
+*.key
+config
+.env
+.env.*

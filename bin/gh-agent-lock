@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Wipe the decrypted GitHub App private key and any cached token from RAM.
+# Run at the end of a session.
+set -euo pipefail
+
+CONFIG_FILE="${GH_AGENT_AUTH_CONFIG:-$HOME/.config/gh-agent-auth/config}"
+[[ -f "$CONFIG_FILE" ]] && . "$CONFIG_FILE"
+
+KEY_DECRYPTED="${GH_AGENT_AUTH_KEY_DECRYPTED:-/dev/shm/github-app-private-key.pem}"
+TOKEN_PATH="${GH_AGENT_AUTH_TOKEN_PATH:-/dev/shm/github-app-token}"
+EXPIRY_PATH="${GH_AGENT_AUTH_EXPIRY_PATH:-/dev/shm/github-app-token-expiry}"
+
+removed=0
+for f in "$KEY_DECRYPTED" "$TOKEN_PATH" "$EXPIRY_PATH"; do
+  if [[ -f "$f" ]]; then
+    rm -f "$f"
+    removed=1
+  fi
+done
+
+if (( removed )); then
+  echo "Locked: key and cached token wiped."
+else
+  echo "Already locked: nothing to wipe."
+fi

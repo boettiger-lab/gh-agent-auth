@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Decrypt a GitHub App private key into RAM (/dev/shm) so other tools can
+# mint short-lived installation tokens without touching disk.
+#
+# Run once at the start of a session — requires YubiKey PIN + touch.
+# The decrypted key remains in /dev/shm until reboot or `gh-agent-lock`.
+set -euo pipefail
+
+CONFIG_FILE="${GH_AGENT_AUTH_CONFIG:-$HOME/.config/gh-agent-auth/config}"
+[[ -f "$CONFIG_FILE" ]] && . "$CONFIG_FILE"
+
+KEY_ENCRYPTED="${GH_AGENT_AUTH_KEY_ENCRYPTED:-}"
+KEY_DECRYPTED="${GH_AGENT_AUTH_KEY_DECRYPTED:-/dev/shm/github-app-private-key.pem}"
+
+if [[ -z "$KEY_ENCRYPTED" ]]; then
+  echo "ERROR: GH_AGENT_AUTH_KEY_ENCRYPTED is not set." >&2
+  echo "Set it in $CONFIG_FILE or in your environment, e.g.:" >&2
+  echo "  GH_AGENT_AUTH_KEY_ENCRYPTED=\$HOME/.config/gh-agent-auth/key.pem.age" >&2
+  exit 1
+fi
+
+if [[ ! -f "$KEY_ENCRYPTED" ]]; then
+  echo "ERROR: encrypted key not found at $KEY_ENCRYPTED" >&2
+  exit 1
+fi
+
+command -v age              >/dev/null || { echo "age not found on PATH" >&2; exit 1; }
+command -v age-plugin-yubikey >/dev/null || { echo "age-plugin-yubikey not found on PATH" >&2; exit 1; }
+
+age --decrypt \
+  -i <(age-plugin-yubikey --identity) \
+  "$KEY_ENCRYPTED" \
+  > "$KEY_DECRYPTED" \
+&& chmod 600 "$KEY_DECRYPTED" \
+&& echo "Key unlocked at $KEY_DECRYPTED."
