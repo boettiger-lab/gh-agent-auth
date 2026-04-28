@@ -234,7 +234,7 @@ set -uo pipefail
 
 echo "test: executed mode emits expires_at to stderr"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_openssl "$dir"
   mock_curl "$dir"
   mock_env_for_get_token
@@ -326,7 +326,7 @@ Append to `tests/test_get-github-token.sh` (before the final `report`):
 ```bash
 echo "test: --repo flag adds repositories[] to POST body"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_openssl "$dir"
   mock_curl "$dir"
   mock_env_for_get_token
@@ -349,7 +349,7 @@ echo "test: --repo flag adds repositories[] to POST body"
 
 echo "test: --repo with cross-org value errors out"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_openssl "$dir"
   mock_curl "$dir"
   mock_env_for_get_token
@@ -491,7 +491,7 @@ Append to `tests/test_get-github-token.sh` (before the final `report`):
 ```bash
 echo "test: --permissions flag adds permissions{} to POST body"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_openssl "$dir"
   mock_curl "$dir"
   mock_env_for_get_token
@@ -510,7 +510,7 @@ echo "test: --permissions flag adds permissions{} to POST body"
 
 echo "test: --repo and --permissions combine in body"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_openssl "$dir"
   mock_curl "$dir"
   mock_env_for_get_token
@@ -611,7 +611,7 @@ Append to `tests/test_get-github-token.sh` (before `report`):
 ```bash
 echo "test: cold-start decrypts via age when KEY_DECRYPTED is missing"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_openssl "$dir"
   mock_curl "$dir"
   mock_age "$dir"
@@ -638,7 +638,7 @@ echo "test: cold-start decrypts via age when KEY_DECRYPTED is missing"
 
 echo "test: errors clearly when neither decrypted nor encrypted key is available"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_openssl "$dir"
   mock_curl "$dir"
 
@@ -781,7 +781,7 @@ echo "test: --help prints usage and exits 0"
 
 echo "test: explicit --repo passes through to get-github-token"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_get_github_token "$dir"
 
   "$REPO_DIR/bin/gh-agent-scope" --repo my-org/foo >/dev/null 2>&1 \
@@ -795,7 +795,7 @@ echo "test: explicit --repo passes through to get-github-token"
 
 echo "test: auto-detects repo from origin remote"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_get_github_token "$dir"
 
   # Make a fake repo with a github.com origin
@@ -814,7 +814,7 @@ echo "test: auto-detects repo from origin remote"
 
 echo "test: handles SSH-style origin URL"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_get_github_token "$dir"
 
   repo_dir="$dir/clone"
@@ -993,7 +993,7 @@ Append to `tests/test_gh-agent-scope.sh` (before `report`):
 ```bash
 echo "test: print-only mode prints token to stdout, expires_at to stderr"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_get_github_token "$dir" "ghs_PRINTONLY_TOKEN"
 
   out=$("$REPO_DIR/bin/gh-agent-scope" --repo test-org/foo 2>/dev/null)
@@ -1010,7 +1010,7 @@ echo "test: print-only mode prints token to stdout, expires_at to stderr"
 
 echo "test: --permissions flag is passed through"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_get_github_token "$dir"
 
   "$REPO_DIR/bin/gh-agent-scope" --repo o/r --permissions contents=read >/dev/null 2>&1 \
@@ -1024,7 +1024,7 @@ echo "test: --permissions flag is passed through"
 
 echo "test: multiple --repo flags are passed through individually"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_get_github_token "$dir"
 
   "$REPO_DIR/bin/gh-agent-scope" --repo o/r1 --repo o/r2 >/dev/null 2>&1 \
@@ -1066,7 +1066,7 @@ Append to `tests/test_gh-agent-scope.sh` (before `report`):
 ```bash
 echo "test: -- COMMAND runs subprocess with GITHUB_TOKEN, GH_TOKEN in env"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_get_github_token "$dir" "ghs_EXEC_TOKEN"
 
   out=$("$REPO_DIR/bin/gh-agent-scope" --repo o/r -- env 2>/dev/null) \
@@ -1083,7 +1083,7 @@ echo "test: -- COMMAND runs subprocess with GITHUB_TOKEN, GH_TOKEN in env"
 
 echo "test: -- COMMAND injects GIT_CONFIG_COUNT credential helper chain"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_get_github_token "$dir" "ghs_GIT_TOKEN"
 
   out=$("$REPO_DIR/bin/gh-agent-scope" --repo o/r -- env 2>/dev/null) \
@@ -1113,7 +1113,7 @@ echo "test: -- COMMAND injects GIT_CONFIG_COUNT credential helper chain"
 
 echo "test: subprocess inherits exit code"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_get_github_token "$dir"
 
   if "$REPO_DIR/bin/gh-agent-scope" --repo o/r -- bash -c 'exit 42' 2>/dev/null; then
@@ -1212,7 +1212,7 @@ Append to `tests/test_gh-agent-scope.sh` (before `report`):
 ```bash
 echo "test: errors when not in a git repo and no --repo given"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_get_github_token "$dir"
   cd "$dir"  # not a git repo
 
@@ -1230,7 +1230,7 @@ echo "test: errors when not in a git repo and no --repo given"
 
 echo "test: errors when origin is not a github.com remote"
 (
-  dir=$(make_sandbox)
+  make_sandbox dir
   mock_get_github_token "$dir"
 
   repo_dir="$dir/clone"

@@ -20,14 +20,21 @@ report() {
   [[ $TESTS_FAIL -eq 0 ]]
 }
 
-# Make a per-test sandbox dir and prepend it to PATH.
-# Returns the sandbox dir; cleans up via EXIT trap.
+# Make a per-test sandbox dir, prepend it to PATH, and register cleanup.
+# Sets the caller's variable to the new dir. Usage:  make_sandbox dir
+#
+# Note: this MUST be called as a direct function call in the test body —
+# not via command substitution `dir=$(make_sandbox)`, because $(...) is a
+# subshell. Side effects (PATH mutation, EXIT trap) wouldn't propagate to
+# the caller, and the EXIT trap would fire as soon as the subshell exits,
+# wiping the dir before the caller could use it.
 make_sandbox() {
-  local dir
-  dir=$(mktemp -d "${TMPDIR:-/tmp}/gh-agent-auth-test.XXXXXX")
-  trap "rm -rf '$dir'" EXIT
-  PATH="$dir:$PATH"
-  echo "$dir"
+  local _ms_var="$1"
+  local _ms_dir
+  _ms_dir=$(mktemp -d "${TMPDIR:-/tmp}/gh-agent-auth-test.XXXXXX")
+  PATH="$_ms_dir:$PATH"
+  trap "rm -rf '$_ms_dir'" EXIT
+  printf -v "$_ms_var" '%s' "$_ms_dir"
 }
 
 # Resolve real openssl/curl path BEFORE we shadow them.
