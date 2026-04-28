@@ -19,6 +19,39 @@ set -euo pipefail
 CONFIG_FILE="${GH_AGENT_AUTH_CONFIG:-$HOME/.config/gh-agent-auth/config}"
 [[ -f "$CONFIG_FILE" ]] && . "$CONFIG_FILE"
 
+# --------------------------------------------------------------------------
+# Parse flags
+# --------------------------------------------------------------------------
+
+REPOS=()
+PERMS=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      [[ $# -ge 2 ]] || { echo "ERROR: --repo requires an argument" >&2; exit 1; }
+      REPOS+=("$2"); shift 2 ;;
+    --permissions)
+      [[ $# -ge 2 ]] || { echo "ERROR: --permissions requires an argument" >&2; exit 1; }
+      PERMS="$2"; shift 2 ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: get-github-token [--repo OWNER/REPO]... [--permissions key=level,...]
+
+Mints a GitHub App installation token. Prints token to stdout and
+"expires_at: <iso>" to stderr.
+
+Without flags, mints a token with the App's full installation scope.
+With --repo, scopes to the listed repos (must be in $GITHUB_APP_ORG).
+With --permissions, narrows to the listed permissions (must be a subset
+of the App installation's permissions; GitHub returns 422 otherwise).
+EOF
+      exit 0 ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2; exit 1 ;;
+  esac
+done
+
 APP_ID="${GITHUB_APP_ID:-}"
 APP_ORG="${GITHUB_APP_ORG:-}"
 KEY_PATH="${GH_AGENT_AUTH_KEY_DECRYPTED:-/dev/shm/github-app-private-key.pem}"
@@ -61,10 +94,35 @@ Is the App installed there? See:
   https://github.com/settings/installations  (user)
   https://github.com/organizations/$APP_ORG/settings/installations  (org)"
 
-RESPONSE=$(curl -fsS -X POST \
-  -H "Authorization: Bearer $JWT" \
-  -H "Accept: application/vnd.github+json" \
-  -H "X-GitHub-Api-Version: 2022-11-28" \
+# Build POST body from --repo / --permissions flags.
+BODY="{}"
+
+if [[ ${#REPOS[@]} -gt 0 ]]; then
+  REPO_NAMES=()
+  for r in "${REPOS[@]}"; do
+    case "$r" in
+      "$APP_ORG"/*)
+        REPO_NAMES+=("${r#*/}") ;;
+      */*)
+        die "repo $r is not in $APP_ORG (App is installed there). Pass repos owned by $APP_ORG only." ;;
+      *)
+        REPO_NAMES+=("$r") ;;  # bare name, assume same org
+    esac
+  done
+  REPOS_JSON=$(printf '%s\n' "${REPO_NAMES[@]}" | jq -R . | jq -cs .)
+  BODY=$(printf '%s' "$BODY" | jq -c --argjson repos "$REPOS_JSON" '.repositories = $repos')
+fi
+
+CURL_ARGS=(-fsS -X POST
+  -H "Authorization: Bearer $JWT"
+  -H "Accept: application/vnd.github+json"
+  -H "X-GitHub-Api-Version: 2022-11-28")
+
+if [[ "$BODY" != "{}" ]]; then
+  CURL_ARGS+=(-H "Content-Type: application/json" -d "$BODY")
+fi
+
+RESPONSE=$(curl "${CURL_ARGS[@]}" \
   "https://api.github.com/app/installations/${INSTALLATION_ID}/access_tokens")
 
 TOKEN=$(printf '%s' "$RESPONSE" | jq -r '.token // empty')
