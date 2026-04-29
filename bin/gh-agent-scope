@@ -103,7 +103,31 @@ if [[ ${#CMD[@]} -eq 0 ]]; then
 fi
 
 # --------------------------------------------------------------------------
-# Subprocess exec mode (filled in in Task 8)
+# Subprocess exec mode
 # --------------------------------------------------------------------------
 
-die "subprocess exec mode not implemented yet"
+# git ≥ 2.31 is required for GIT_CONFIG_COUNT.
+if command -v git >/dev/null; then
+  git_ver=$(git --version | awk '{print $3}')
+  git_major=${git_ver%%.*}
+  rest=${git_ver#*.}
+  git_minor=${rest%%.*}
+  if (( git_major < 2 || (git_major == 2 && git_minor < 31) )); then
+    die "git $git_ver is too old; need git ≥ 2.31 for GIT_CONFIG_COUNT support."
+  fi
+fi
+
+# Inline git credential helper that reads GITHUB_TOKEN from the environment.
+# The empty helper='' first clears any inherited helper chain so the parent
+# shell's git-credential-github-app (full-permission) doesn't intercept.
+GIT_CRED='!f(){ echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
+
+exec env \
+  GITHUB_TOKEN="$TOKEN" \
+  GH_TOKEN="$TOKEN" \
+  GIT_CONFIG_COUNT=2 \
+  GIT_CONFIG_KEY_0='credential.https://github.com.helper' \
+  GIT_CONFIG_VALUE_0='' \
+  GIT_CONFIG_KEY_1='credential.https://github.com.helper' \
+  GIT_CONFIG_VALUE_1="$GIT_CRED" \
+  "${CMD[@]}"

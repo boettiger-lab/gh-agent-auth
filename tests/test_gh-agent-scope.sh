@@ -120,4 +120,66 @@ echo "test: multiple --repo flags are passed through individually"
     || fail "got: $args"
 )
 
+echo "test: -- COMMAND runs subprocess with GITHUB_TOKEN, GH_TOKEN in env"
+(
+  make_sandbox dir
+  mock_get_github_token "$dir" "ghs_EXEC_TOKEN"
+
+  out=$("$REPO_DIR/bin/gh-agent-scope" --repo o/r -- env 2>/dev/null) \
+    || fail "non-zero exit from subprocess"
+
+  echo "$out" | grep -q '^GITHUB_TOKEN=ghs_EXEC_TOKEN$' \
+    && ok "GITHUB_TOKEN in env" \
+    || fail "GITHUB_TOKEN not set in subprocess env"
+
+  echo "$out" | grep -q '^GH_TOKEN=ghs_EXEC_TOKEN$' \
+    && ok "GH_TOKEN in env" \
+    || fail "GH_TOKEN not set in subprocess env"
+)
+
+echo "test: -- COMMAND injects GIT_CONFIG_COUNT credential helper chain"
+(
+  make_sandbox dir
+  mock_get_github_token "$dir" "ghs_GIT_TOKEN"
+
+  out=$("$REPO_DIR/bin/gh-agent-scope" --repo o/r -- env 2>/dev/null) \
+    || fail "non-zero exit"
+
+  echo "$out" | grep -q '^GIT_CONFIG_COUNT=2$' \
+    && ok "GIT_CONFIG_COUNT=2" \
+    || fail "GIT_CONFIG_COUNT not set"
+
+  echo "$out" | grep -q '^GIT_CONFIG_KEY_0=credential.https://github.com.helper$' \
+    && ok "key 0 is credential helper key" \
+    || fail "GIT_CONFIG_KEY_0 wrong"
+
+  # Value 0 should be empty (clears inherited helpers)
+  echo "$out" | grep -q '^GIT_CONFIG_VALUE_0=$' \
+    && ok "value 0 is empty (clears inherited helpers)" \
+    || fail "GIT_CONFIG_VALUE_0 not empty"
+
+  echo "$out" | grep -q '^GIT_CONFIG_KEY_1=credential.https://github.com.helper$' \
+    && ok "key 1 is credential helper key" \
+    || fail "GIT_CONFIG_KEY_1 wrong"
+
+  echo "$out" | grep -q '^GIT_CONFIG_VALUE_1=!f(){' \
+    && ok "value 1 contains inline helper function" \
+    || fail "GIT_CONFIG_VALUE_1 not the inline helper"
+)
+
+echo "test: subprocess inherits exit code"
+(
+  make_sandbox dir
+  mock_get_github_token "$dir"
+
+  if "$REPO_DIR/bin/gh-agent-scope" --repo o/r -- bash -c 'exit 42' 2>/dev/null; then
+    fail "expected non-zero exit"
+  else
+    rc=$?
+    [[ $rc -eq 42 ]] \
+      && ok "exit code 42 propagated" \
+      || fail "expected 42, got $rc"
+  fi
+)
+
 report
