@@ -16,10 +16,22 @@ mkdir -p "$BIN_DIR" "$CONFIG_DIR"
 # Copy scripts to BIN_DIR
 # --------------------------------------------------------------------------
 
-for script in gh-agent-unlock gh-agent-lock get-github-token git-credential-github-app; do
+PORTABLE_SCRIPTS=(get-github-token gh-agent-scope)
+LINUX_ONLY_SCRIPTS=(gh-agent-unlock gh-agent-lock git-credential-github-app)
+
+for script in "${PORTABLE_SCRIPTS[@]}"; do
   install -m 0755 "$REPO_DIR/bin/$script" "$BIN_DIR/$script"
   echo "Installed $BIN_DIR/$script"
 done
+
+if [[ "$(uname)" == "Linux" ]]; then
+  for script in "${LINUX_ONLY_SCRIPTS[@]}"; do
+    install -m 0755 "$REPO_DIR/bin/$script" "$BIN_DIR/$script"
+    echo "Installed $BIN_DIR/$script"
+  done
+else
+  echo "Detected $(uname); skipping Linux-only scripts: ${LINUX_ONLY_SCRIPTS[*]}"
+fi
 
 # --------------------------------------------------------------------------
 # Seed config file if absent
@@ -60,24 +72,33 @@ fi
 #   helper = !gh auth git-credential           ← personal gh fallback
 # --------------------------------------------------------------------------
 
-GH_BIN="$(command -v gh || true)"
-if [[ -z "$GH_BIN" ]]; then
-  echo "WARNING: gh CLI not found on PATH; skipping personal-fallback wiring." >&2
-  FALLBACK_HELPER=""
-else
-  FALLBACK_HELPER="!$GH_BIN auth git-credential"
-fi
+if [[ "$(uname)" == "Linux" ]]; then
+  GH_BIN="$(command -v gh || true)"
+  if [[ -z "$GH_BIN" ]]; then
+    echo "WARNING: gh CLI not found on PATH; skipping personal-fallback wiring." >&2
+    FALLBACK_HELPER=""
+  else
+    FALLBACK_HELPER="!$GH_BIN auth git-credential"
+  fi
 
-git config --global --unset-all 'credential.https://github.com.helper' 2>/dev/null || true
-git config --global  'credential.https://github.com.helper' ''
-git config --global --add 'credential.https://github.com.helper' 'github-app'
-[[ -n "$FALLBACK_HELPER" ]] && \
-  git config --global --add 'credential.https://github.com.helper' "$FALLBACK_HELPER"
+  git config --global --unset-all 'credential.https://github.com.helper' 2>/dev/null || true
+  git config --global  'credential.https://github.com.helper' ''
+  git config --global --add 'credential.https://github.com.helper' 'github-app'
+  [[ -n "$FALLBACK_HELPER" ]] && \
+    git config --global --add 'credential.https://github.com.helper' "$FALLBACK_HELPER"
+else
+  echo "Skipping git credential-helper wiring on $(uname) (use gh-agent-scope instead)."
+fi
 
 echo ""
 echo "Done. Make sure $BIN_DIR is on your PATH, then:"
 echo "  1. Edit $CONFIG_FILE with your App ID, org, and encrypted-key path."
 echo "  2. Encrypt your App's .pem with age + age-plugin-yubikey:"
 echo "       age -r 'age1yubikey1...' -o key.pem.age private-key.pem"
-echo "  3. gh-agent-unlock   (once per session)"
-echo "  4. Use git and gh normally — the helper handles tokens transparently."
+if [[ "$(uname)" == "Linux" ]]; then
+  echo "  3. gh-agent-unlock   (once per session)"
+  echo "  4. Use git and gh normally — the helper handles tokens transparently."
+  echo "     Or use gh-agent-scope -- COMMAND for ephemeral, scoped tokens."
+else
+  echo "  3. gh-agent-scope -- COMMAND   (each invocation = one YubiKey touch)"
+fi
