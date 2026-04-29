@@ -182,4 +182,57 @@ echo "test: subprocess inherits exit code"
   fi
 )
 
+echo "test: errors when not in a git repo and no --repo given"
+(
+  make_sandbox dir
+  mock_get_github_token "$dir"
+  cd "$dir"  # not a git repo
+
+  err_file=$(mktemp)
+  cleanup_path "$err_file"
+
+  if "$REPO_DIR/bin/gh-agent-scope" -- env >/dev/null 2>"$err_file"; then
+    fail "expected non-zero exit"
+  else
+    grep -qi 'no --repo' "$err_file" \
+      && ok "error mentions --repo" \
+      || fail "stderr=[$(cat "$err_file")]"
+  fi
+)
+
+echo "test: errors when origin is not a github.com remote"
+(
+  make_sandbox dir
+  mock_get_github_token "$dir"
+
+  repo_dir="$dir/clone"
+  mkdir -p "$repo_dir"
+  ( cd "$repo_dir" && git init -q && git remote add origin https://gitlab.com/foo/bar.git )
+
+  err_file=$(mktemp)
+  cleanup_path "$err_file"
+
+  if ( cd "$repo_dir" && "$REPO_DIR/bin/gh-agent-scope" -- env ) >/dev/null 2>"$err_file"; then
+    fail "expected non-zero exit"
+  else
+    grep -qi 'github.com' "$err_file" \
+      && ok "error mentions github.com" \
+      || fail "stderr=[$(cat "$err_file")]"
+  fi
+)
+
+echo "test: errors on unknown flag"
+(
+  err_file=$(mktemp)
+  cleanup_path "$err_file"
+
+  if "$REPO_DIR/bin/gh-agent-scope" --bogus >/dev/null 2>"$err_file"; then
+    fail "expected non-zero exit"
+  else
+    grep -qi 'unknown flag' "$err_file" \
+      && ok "error mentions unknown flag" \
+      || fail "stderr=[$(cat "$err_file")]"
+  fi
+)
+
 report
