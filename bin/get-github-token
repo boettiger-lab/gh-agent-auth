@@ -19,6 +19,39 @@ set -euo pipefail
 CONFIG_FILE="${GH_AGENT_AUTH_CONFIG:-$HOME/.config/gh-agent-auth/config}"
 [[ -f "$CONFIG_FILE" ]] && . "$CONFIG_FILE"
 
+# --------------------------------------------------------------------------
+# Parse flags
+# --------------------------------------------------------------------------
+
+REPOS=()
+PERMS=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      [[ $# -ge 2 ]] || { echo "ERROR: --repo requires an argument" >&2; exit 1; }
+      REPOS+=("$2"); shift 2 ;;
+    --permissions)
+      [[ $# -ge 2 ]] || { echo "ERROR: --permissions requires an argument" >&2; exit 1; }
+      PERMS="$2"; shift 2 ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: get-github-token [--repo OWNER/REPO]... [--permissions key=level,...]
+
+Mints a GitHub App installation token. Prints token to stdout and
+"expires_at: <iso>" to stderr.
+
+Without flags, mints a token with the App's full installation scope.
+With --repo, scopes to the listed repos (must be in $GITHUB_APP_ORG).
+With --permissions, narrows to the listed permissions (must be a subset
+of the App installation's permissions; GitHub returns 422 otherwise).
+EOF
+      exit 0 ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2; exit 1 ;;
+  esac
+done
+
 APP_ID="${GITHUB_APP_ID:-}"
 APP_ORG="${GITHUB_APP_ORG:-}"
 KEY_PATH="${GH_AGENT_AUTH_KEY_DECRYPTED:-/dev/shm/github-app-private-key.pem}"
@@ -28,7 +61,15 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 [[ -n "$APP_ID"  ]] || die "GITHUB_APP_ID is not set (configure in $CONFIG_FILE or env)"
 [[ -n "$APP_ORG" ]] || die "GITHUB_APP_ORG is not set (configure in $CONFIG_FILE or env)"
 
-[[ -f "$KEY_PATH" ]] || die "Private key not unlocked at $KEY_PATH. Run gh-agent-unlock first."
+KEY_ENCRYPTED="${GH_AGENT_AUTH_KEY_ENCRYPTED:-}"
+
+if [[ ! -f "$KEY_PATH" && ! -f "$KEY_ENCRYPTED" ]]; then
+  die "No private key available.
+Either unlock the persistent key:
+  gh-agent-unlock
+or set GH_AGENT_AUTH_KEY_ENCRYPTED to the path of your age-encrypted .pem
+in $CONFIG_FILE or your environment."
+fi
 
 command -v jq      >/dev/null || die "jq is required"
 command -v curl    >/dev/null || die "curl is required"
@@ -44,9 +85,21 @@ EXP=$((NOW + 540))  # 9 min (GitHub max is 10)
 
 HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | base64url)
 PAYLOAD=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$IAT" "$EXP" "$APP_ID" | base64url)
-SIG=$(printf '%s' "${HEADER}.${PAYLOAD}" \
-  | openssl dgst -sha256 -sign "$KEY_PATH" \
-  | base64url)
+if [[ -f "$KEY_PATH" ]]; then
+  # Fast path: persistent key already unlocked
+  SIG=$(printf '%s' "${HEADER}.${PAYLOAD}" \
+    | openssl dgst -sha256 -sign "$KEY_PATH" \
+    | base64url)
+else
+  # Cold start: decrypt via age + age-plugin-yubikey through process
+  # substitution so the decrypted key never lands on disk.
+  command -v age              >/dev/null || die "age not on PATH (needed for cold-start decryption)"
+  command -v age-plugin-yubikey >/dev/null || die "age-plugin-yubikey not on PATH"
+
+  SIG=$(printf '%s' "${HEADER}.${PAYLOAD}" \
+    | openssl dgst -sha256 -sign <(age --decrypt -i <(age-plugin-yubikey --identity) "$KEY_ENCRYPTED") \
+    | base64url)
+fi
 JWT="${HEADER}.${PAYLOAD}.${SIG}"
 
 INSTALLATION_ID=$(curl -fsS \
@@ -61,10 +114,43 @@ Is the App installed there? See:
   https://github.com/settings/installations  (user)
   https://github.com/organizations/$APP_ORG/settings/installations  (org)"
 
-RESPONSE=$(curl -fsS -X POST \
-  -H "Authorization: Bearer $JWT" \
-  -H "Accept: application/vnd.github+json" \
-  -H "X-GitHub-Api-Version: 2022-11-28" \
+# Build POST body from --repo / --permissions flags.
+BODY="{}"
+
+if [[ ${#REPOS[@]} -gt 0 ]]; then
+  REPO_NAMES=()
+  for r in "${REPOS[@]}"; do
+    case "$r" in
+      "$APP_ORG"/*)
+        REPO_NAMES+=("${r#*/}") ;;
+      */*)
+        die "repo $r is not in $APP_ORG (App is installed there). Pass repos owned by $APP_ORG only." ;;
+      *)
+        die "repo '$r' must be in OWNER/REPO form (got bare name)" ;;
+    esac
+  done
+  REPOS_JSON=$(printf '%s\n' "${REPO_NAMES[@]}" | jq -R . | jq -cs .)
+  BODY=$(printf '%s' "$BODY" | jq -c --argjson repos "$REPOS_JSON" '.repositories = $repos')
+fi
+
+if [[ -n "$PERMS" ]]; then
+  # Convert "key=val,key=val" into a JSON object.
+  PERMS_JSON=$(printf '%s\n' "$PERMS" | tr ',' '\n' \
+    | jq -R 'select(length > 0) | split("=") | {(.[0]): .[1]}' \
+    | jq -cs 'add // {}')
+  BODY=$(printf '%s' "$BODY" | jq -c --argjson perms "$PERMS_JSON" '.permissions = $perms')
+fi
+
+CURL_ARGS=(-fsS -X POST
+  -H "Authorization: Bearer $JWT"
+  -H "Accept: application/vnd.github+json"
+  -H "X-GitHub-Api-Version: 2022-11-28")
+
+if [[ "$BODY" != "{}" ]]; then
+  CURL_ARGS+=(-H "Content-Type: application/json" -d "$BODY")
+fi
+
+RESPONSE=$(curl "${CURL_ARGS[@]}" \
   "https://api.github.com/app/installations/${INSTALLATION_ID}/access_tokens")
 
 TOKEN=$(printf '%s' "$RESPONSE" | jq -r '.token // empty')
@@ -72,10 +158,12 @@ EXPIRES=$(printf '%s' "$RESPONSE" | jq -r '.expires_at // empty')
 
 [[ -n "$TOKEN" ]] || die "Failed to mint token. Response: $RESPONSE"
 
-# When sourced: export GITHUB_TOKEN. When executed: print the token.
+# Always emit expiry to stderr so callers can capture it.
+echo "expires_at: $EXPIRES" >&2
+
+# When sourced: export GITHUB_TOKEN. When executed: print the token to stdout.
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
   export GITHUB_TOKEN="$TOKEN"
-  echo "GITHUB_TOKEN set (expires $EXPIRES)" >&2
 else
   echo "$TOKEN"
 fi

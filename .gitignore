@@ -6,3 +6,9 @@
 config
 .env
 .env.*
+
+# Allow the (non-secret) test fixture key.
+!tests/fixtures/fake-key.pem
+
+# Test sandbox dirs (in case any leak)
+tests/tmp/

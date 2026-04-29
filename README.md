@@ -81,7 +81,7 @@ helper chain for `github.com`.
    GH_AGENT_AUTH_KEY_ENCRYPTED="$HOME/.config/gh-agent-auth/key.pem.age"
    ```
 
-## Daily usage
+## Daily usage (Linux, optional)
 
 ```bash
 gh-agent-unlock     # YubiKey PIN + touch — once per session
@@ -96,6 +96,36 @@ To mint a raw token for ad-hoc API calls:
 token=$(get-github-token)
 curl -H "Authorization: Bearer $token" https://api.github.com/repos/your-org/your-repo
 ```
+
+## For agent runs (everyone, including macOS)
+
+`gh-agent-scope` mints a token narrowed to specific repos and permissions,
+then runs a command with that token in env. The token's lifetime equals
+the command's lifetime — when the agent exits, the token is gone.
+
+```bash
+# Run an agent in cwd's repo, full installation perms
+gh-agent-scope -- claude
+
+# Read-only token for a test runner
+gh-agent-scope --permissions contents=read,metadata=read -- pytest tests
+
+# Multi-repo (must all be in the same App installation)
+gh-agent-scope --repo myorg/foo --repo myorg/bar -- agent
+
+# Print token (no subprocess) — for ad-hoc API calls
+token=$(gh-agent-scope --repo owner/foo)
+curl -H "Authorization: Bearer $token" https://api.github.com/repos/owner/foo
+```
+
+Inside the subprocess, both `git push` and `gh pr create` see only the
+scoped token — the parent shell's auth state is unchanged. This is the
+recommended pattern for autonomous coding agents: a misbehaving agent in
+`~/projects/foo` can only touch `foo`, not `bar` or `baz`.
+
+`gh-agent-scope` requires `git ≥ 2.31` (for `GIT_CONFIG_COUNT`-based
+inline credential helper injection). macOS Sonoma ships 2.39, current
+Linux distros are well past this.
 
 ## How the credential chain works
 
@@ -138,6 +168,22 @@ All scripts read `$GH_AGENT_AUTH_CONFIG` (default
 | `GH_AGENT_AUTH_KEY_DECRYPTED` | no | `/dev/shm/github-app-private-key.pem` | Where the unlocked key lives |
 | `GH_AGENT_AUTH_TOKEN_PATH` | no | `/dev/shm/github-app-token` | Where cached tokens live |
 | `GH_AGENT_AUTH_EXPIRY_PATH` | no | `/dev/shm/github-app-token-expiry` | Cached token expiry |
+
+## Platform support
+
+| Component | Linux | macOS | Notes |
+|---|---|---|---|
+| `gh-agent-scope` | ✓ | ✓ | Primary tool; works everywhere |
+| `get-github-token` | ✓ | ✓ | Works everywhere |
+| `gh-agent-unlock` / `gh-agent-lock` | ✓ | ✗ | Use `/dev/shm` for persistent key |
+| `git-credential-github-app` | ✓ | ✗ | Reads from `/dev/shm` |
+
+macOS users use `gh-agent-scope` for everything. Each invocation requires
+one YubiKey touch — clean parallel to launching a Codespace.
+
+Linux users get the same `gh-agent-scope` tool *plus* an optional
+"unlock once, push all day" workflow via the persistent helper. The
+two flows are independent and can be used together.
 
 ## License
 

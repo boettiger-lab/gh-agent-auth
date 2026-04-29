@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# gh-agent-scope — mint a GitHub App installation token narrowed to specific
+# repos and permissions, then either print it (no -- COMMAND) or exec a
+# subprocess with it in env. Codespaces-style ephemeral credentials.
+set -euo pipefail
+
+CONFIG_FILE="${GH_AGENT_AUTH_CONFIG:-$HOME/.config/gh-agent-auth/config}"
+[[ -f "$CONFIG_FILE" ]] && . "$CONFIG_FILE"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+Usage: gh-agent-scope [--repo OWNER/REPO]... [--permissions key=level,...] [-- COMMAND [ARGS...]]
+
+Mint a GitHub App installation token scoped to specific repos and/or
+permissions. With -- COMMAND, exec the command with the token in env
+(GITHUB_TOKEN, GH_TOKEN, plus an inline git credential helper).
+Without -- COMMAND, print the token to stdout (expiry to stderr).
+
+Options:
+  --repo OWNER/REPO       Scope to this repo. Repeatable.
+                          Default: cwd's origin remote, if it's github.com.
+  --permissions K=V,...   Narrow to a subset of the App's permissions
+                          (e.g. contents=read,issues=write).
+  -h, --help              Show this help.
+EOF
+}
+
+# --------------------------------------------------------------------------
+# Parse flags
+# --------------------------------------------------------------------------
+
+REPOS=()
+PERMS=""
+CMD=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      [[ $# -ge 2 ]] || die "--repo requires an argument"
+      REPOS+=("$2"); shift 2 ;;
+    --permissions)
+      [[ $# -ge 2 ]] || die "--permissions requires an argument"
+      PERMS="$2"; shift 2 ;;
+    -h|--help)
+      usage; exit 0 ;;
+    --)
+      shift; CMD=("$@"); break ;;
+    -*)
+      die "unknown flag: $1 (use --help for usage)" ;;
+    *)
+      die "unexpected positional argument: $1 (use -- to separate the command)" ;;
+  esac
+done
+
+# --------------------------------------------------------------------------
+# Resolve the target repo set
+# --------------------------------------------------------------------------
+
+if [[ ${#REPOS[@]} -eq 0 ]]; then
+  url=$(git remote get-url origin 2>/dev/null) \
+    || die "no --repo given and not in a git repo (or no 'origin' remote). Pass --repo OWNER/REPO."
+
+  case "$url" in
+    https://github.com/*)
+      repo=${url#https://github.com/}; repo=${repo%.git} ;;
+    git@github.com:*)
+      repo=${url#git@github.com:}; repo=${repo%.git} ;;
+    *)
+      die "origin is not a github.com remote: $url. Pass --repo OWNER/REPO explicitly." ;;
+  esac
+  REPOS+=("$repo")
+fi
+
+# --------------------------------------------------------------------------
+# Mint the token
+# --------------------------------------------------------------------------
+
+gh_args=()
+for r in "${REPOS[@]}"; do gh_args+=(--repo "$r"); done
+[[ -n "$PERMS" ]] && gh_args+=(--permissions "$PERMS")
+
+err_file=$(mktemp)
+trap 'rm -f "$err_file"' EXIT
+
+TOKEN=$(get-github-token "${gh_args[@]}" 2>"$err_file") || {
+  cat "$err_file" >&2
+  exit 1
+}
+
+EXPIRY_LINE=$(grep '^expires_at: ' "$err_file" | tail -n1 || true)
+EXPIRY=${EXPIRY_LINE#expires_at: }
+
+# --------------------------------------------------------------------------
+# Print-only mode
+# --------------------------------------------------------------------------
+
+if [[ ${#CMD[@]} -eq 0 ]]; then
+  echo "$TOKEN"
+  echo "expires_at: $EXPIRY" >&2
+  exit 0
+fi
+
+# --------------------------------------------------------------------------
+# Subprocess exec mode
+# --------------------------------------------------------------------------
+
+# git ≥ 2.31 is required for GIT_CONFIG_COUNT.
+if command -v git >/dev/null; then
+  git_ver=$(git --version | awk '{print $3}')
+  git_major=${git_ver%%.*}
+  rest=${git_ver#*.}
+  git_minor=${rest%%.*}
+  if (( git_major < 2 || (git_major == 2 && git_minor < 31) )); then
+    die "git $git_ver is too old; need git ≥ 2.31 for GIT_CONFIG_COUNT support."
+  fi
+fi
+
+# Inline git credential helper that reads GITHUB_TOKEN from the environment.
+# The empty helper='' first clears any inherited helper chain so the parent
+# shell's git-credential-github-app (full-permission) doesn't intercept.
+GIT_CRED='!f(){ echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
+
+exec env \
+  GITHUB_TOKEN="$TOKEN" \
+  GH_TOKEN="$TOKEN" \
+  GIT_CONFIG_COUNT=2 \
+  GIT_CONFIG_KEY_0='credential.https://github.com.helper' \
+  GIT_CONFIG_VALUE_0='' \
+  GIT_CONFIG_KEY_1='credential.https://github.com.helper' \
+  GIT_CONFIG_VALUE_1="$GIT_CRED" \
+  "${CMD[@]}"
